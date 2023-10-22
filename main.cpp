@@ -2,6 +2,7 @@
 #include <fstream>
 #include <vector>
 #include <cstdlib>
+#include <chrono>
 
 using namespace std;
 
@@ -84,50 +85,46 @@ int getFileSizeFromKeyFile(fstream &file, fstream &key) {
     return -1;
 }
 
+unsigned int passToSeed(string password) {
+    string out;
+    for (int i = 0; i < password.length(); i++) {
+        out += (int)password[i];
+    }
+    return stoi(password) % 4294967295 + 1;
+}
+
 int main(int argc, char *argv[]) {
     cout << "Enter file name: ";
+    string password;
     string file;
     cin >> file;
+    cout << "Enter password: ";
+    cin >> password;
     fstream cr(file);
     if (!cr.is_open()) {
         cout << "File not found" << endl;
         return 1;
     }
     cout << "Starting..." << endl;
+    auto start = std::chrono::high_resolution_clock::now();
     vector<vector<short>> blocks = splitSrcFile(cr);
     int scrSize = getFileSize(cr);
-    fstream keyFile(file + ".key");
     vector<char> key;
-    cout << "Key size: ";
-    cout << getFileSize(keyFile) << endl;
-    if (getFileSize(keyFile) != 0) {
-        key = getKeyFromFile(keyFile);
-        cout << "Key found" << endl;
-    }
-    else {
-        key = genByteVec(scrSize);
-        writeKeyFile(key, keyFile, scrSize);
-        cout << "Key generated" << endl;
-    }
-    int fz = getFileSizeFromKeyFile(cr, keyFile);
-    if (fz == -1) {
-        cout << "Wrong key file" << endl;
-        keyFile.close();
-        return 1;
-    }
-    key = getKeyFromFile(keyFile);
-    cout << "Scr file size: " << getFileSizeFromKeyFile(cr, keyFile) << endl;
-    keyFile.close();
+    key = genByteVec(scrSize, passToSeed(password));
+    cout << "Scr file size: " << scrSize << endl;
     for (int i = 0; i < blocks.size(); i++) {
         blocks[i] = xorBlock(key, blocks[i]);
+        cout << "XORing blocks " << i << "/" << blocks.size() - 1 << endl;
     }
     fstream out(file, ios::out | ios::in);
     for (int i = 0; i < blocks.size(); i++) {
+        cout << "Writing block: " << i << '/' << blocks.size() << endl;
         for (int j = 0; j < blocks[i].size(); j++) {
             out.put(blocks[i][j]);
         }
     }
     out.close();
+    auto end = std::chrono::high_resolution_clock::now();
+    cout << "Time to crack: " << (std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() + 1) * passToSeed(password) * 2 / 1000 << " sec" << endl;
     return 0;
 }
-//stoi
