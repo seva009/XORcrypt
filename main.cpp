@@ -3,11 +3,28 @@
 #include <vector>
 #include <cstdlib>
 #include <chrono>
+#include <openssl/sha.h>
+#include <string>
+#include <algorithm>
+#include <omp.h>
 
 using namespace std;
 
 const int keyPos = 15;
 const int blockSize = 256;
+
+unsigned int SHA1Hash(const std::string& str) {
+    unsigned char hash[SHA_DIGEST_LENGTH];
+    SHA1(reinterpret_cast<const unsigned char*>(str.c_str()), str.length(), hash);
+
+    unsigned int result = 0;
+    for (int i = 0; i < sizeof(unsigned int); i++) {
+        result <<= 8;
+        result |= hash[i];
+    }
+
+    return result;
+}
 
 int getFileSize(fstream &file){
     file.seekg(0, ios::end);
@@ -26,31 +43,17 @@ vector<char> genByteVec(int len, int seed = time(NULL), int size = 256){
 }
 
 vector<short> xorBlock(vector<char> key, vector<short> block, int pos = 0){
-    vector<short> result;
-    for (int i = 0; i < block.size(); i++){
-        result.push_back(block[i] ^ key[i + pos]);
-    }
+    vector<short> result(block.size());
+    std::transform(block.begin(), block.end(), key.begin() + pos, result.begin(), std::bit_xor<short>());
     return result;
-}
-    
-void writeKeyFile(vector<char> key, fstream &file, int size) {
-    const string keyStr = to_string(size);
-    for (int i = 0; i < keyPos - keyStr.length(); i++) {
-        file << 0;
-    }
-    file << keyStr;
-    for (int i = 0; i < key.size(); i++) {
-        file << key[i];
-    }
 }
 
 vector<vector<short>> splitSrcFile(fstream &file) {
     int size = getFileSize(file); // size of file
     int fBlocks = (size - (size % blockSize)) / blockSize; // number of full blocks
-    cout << "Number of full blocks: " << fBlocks << endl;
     int endBlock = size % blockSize; // size of last block
-    cout << "Size of last block: " << endBlock << endl;
     vector<vector<short>> result;
+    result.reserve(fBlocks + 1);
     for (int i = 0; i < fBlocks; i++) { // pushing full blocks into result
         vector<short> block;
         for (int j = 0; j < blockSize; j++) {
@@ -66,32 +69,7 @@ vector<vector<short>> splitSrcFile(fstream &file) {
     return result;
 }
 
-vector<char> getKeyFromFile(fstream &file) {
-    vector<char> key;
-    for (int i = keyPos + 1; i < getFileSize(file); i++) {
-        key.push_back(file.get());
-    }
-    file.seekg(0, ios::beg);
-    return key;
-}
-
-int getFileSizeFromKeyFile(fstream &file, fstream &key) {
-    int size = getFileSize(file);
-    int keySize = getFileSize(key);
-    if (keySize - size == keyPos) {
-        return size;
-    }
-    cout << "Wrong key size" << endl;
-    return -1;
-}
-
-unsigned int passToSeed(string password) {
-    string out;
-    for (int i = 0; i < password.length(); i++) {
-        out += (int)password[i];
-    }
-    return stoi(password) % 4294967295 + 1;
-}
+unsigned int passToSeed(string password) { return SHA1Hash(password); }
 
 int main(int argc, char *argv[]) {
     cout << "Enter file name: ";
@@ -100,6 +78,10 @@ int main(int argc, char *argv[]) {
     cin >> file;
     cout << "Enter password: ";
     cin >> password;
+    int numThreads;
+    cout << "Enter the number of threads: ";
+    cin >> numThreads;
+    omp_set_num_threads(numThreads);
     fstream cr(file);
     if (!cr.is_open()) {
         cout << "File not found" << endl;
@@ -109,22 +91,37 @@ int main(int argc, char *argv[]) {
     auto start = std::chrono::high_resolution_clock::now();
     vector<vector<short>> blocks = splitSrcFile(cr);
     int scrSize = getFileSize(cr);
+    cr.close();
     vector<char> key;
     key = genByteVec(scrSize, passToSeed(password));
     cout << "Scr file size: " << scrSize << endl;
-    for (int i = 0; i < blocks.size(); i++) {
-        blocks[i] = xorBlock(key, blocks[i]);
-        cout << "XORing blocks " << i << "/" << blocks.size() - 1 << endl;
-    }
-    fstream out(file, ios::out | ios::in);
-    for (int i = 0; i < blocks.size(); i++) {
-        cout << "Writing block: " << i << '/' << blocks.size() << endl;
-        for (int j = 0; j < blocks[i].size(); j++) {
-            out.put(blocks[i][j]);
+    const int blockCount = 512;
+
+    #pragma omp parallel for
+    for (int i = 0; i < blocks.size(); i += blockCount) {
+        int end = min(i + blockCount, (int)blocks.size());
+        for (int j = i; j < end; j++) {
+            blocks[j] = xorBlock(key, blocks[j]);
+            cout << "XORing block " << j << "/" << blocks.size() - 1 << endl;
         }
     }
+
+    fstream out(file, ios::out | ios::in);
+
+    for (int i = 0; i < blocks.size(); i += blockCount) {
+        int end = min(i + blockCount, (int)blocks.size());
+        for (int j = i; j < end; j++) {
+            cout << "Writing block: " << j << '/' << blocks.size() << endl;
+            for (int k = 0; k < blocks[j].size(); k++) {
+                out.put(blocks[j][k]);
+            }
+        }
+    }
+
     out.close();
     auto end = std::chrono::high_resolution_clock::now();
-    cout << "Time to crack: " << (std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() + 1) * passToSeed(password) * 2 / 1000 << " sec" << endl;
+    int64_t time = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    cout << "Crypt time: " << time << endl;
+    cout << "Time to crack: " << time * passToSeed(password) / 500 << " sec" << endl;
     return 0;
 }
