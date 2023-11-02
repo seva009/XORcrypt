@@ -6,7 +6,9 @@
 
 std::string path;
 std::string strPass;
+std::string ndPass = "noPass";
 int threads;
+int clc = 0;
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -29,13 +31,19 @@ void MainWindow::on_xorStart_clicked()
     ui->cryptProgress->setValue(0);
     crypt.setThreads(threads); //10
     ui->cryptProgress->setValue(20);
-    crypt.init(path, strPass); //50
+    if (clc % 2) {
+        ndPass = ui->ndpassword->text().toStdString();
+        crypt.init(path, strPass, ndPass); //50
+    } else {
+        crypt.init(path, strPass); //50
+    }
     ui->cryptProgress->setValue(40);
     crypt.cryptFile(); //73
     ui->cryptProgress->setValue(60);
-    crypt.saveFile(); //90
-    ui->cryptProgress->setValue(80);
     crypt.wipe();
+    ui->cryptProgress->setValue(80);
+    crypt.saveFile(); //90
+    crypt.fileWipe();
     ui->cryptProgress->setValue(100);
 }
 
@@ -46,4 +54,9 @@ void MainWindow::on_threads_valueChanged(int arg1)
     } else {
         ui->thName->setText("thread");
     }
+}
+
+void MainWindow::on_hasNd_stateChanged(int arg1)
+{
+    clc++;
 }

@@ -5,7 +5,6 @@
 #include "mainwindow.h"
 #include <iostream>
 
-// Подключаем слот к сигналу clicked() кнопки
 int main(int argc, char *argv[])
 {
     QApplication a(argc, argv);

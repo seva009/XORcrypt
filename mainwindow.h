@@ -20,6 +20,8 @@ private slots:
 
     void on_threads_valueChanged(int arg1);
 
+    void on_hasNd_stateChanged(int arg1);
+
 private:
     Ui::MainWindow *ui;
 };
