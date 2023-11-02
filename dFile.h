@@ -3,6 +3,7 @@
 #include <omp.h>
 #include <iostream>
 #include "md5.h"
+#include <random>
 
 using namespace std;
 
@@ -24,7 +25,7 @@ struct dFile {
             file.open(filename, ios::in | ios::out);
         }
 
-        void Clear() {
+        void clear() {
             file.close();
             free(memFilePtr);
         }
@@ -41,24 +42,22 @@ struct dFile {
 };
 
 struct Crypt {
+    mt19937_64 gen1;
+    mt19937_64 gen2;
     private:
-        void* genKey(unsigned int seed, size_t size) {
+        void* genKey(unsigned int seed, size_t size, mt19937_64& eng) {
             void* memKey = malloc(size);
             if (memKey == nullptr) {
                 return NULL;
             }
-            srand(seed);
+            eng.seed(seed);
             for (int i = 0; i < size; i++) {
-                ((char*)memKey)[i] = (rand() % 94) + 33;
+                ((unsigned char*)memKey)[i] = eng() % 256;
             }
             return memKey;
         }
 
-        unsigned int md5ToUInt(const std::string& md5hash) {
-            if (md5hash.length() < 8) {
-                throw std::runtime_error("Invalid MD5 hash length");
-            }
-
+        unsigned int htoui(const std::string& md5hash) {
             std::string subHash = md5hash.substr(0, 8);
             unsigned int result = std::stoul(subHash, nullptr, 16);
 
@@ -67,21 +66,31 @@ struct Crypt {
 
         unsigned int MD5HashToUInt(const std::string& str) {
             std::string hashStr = md5(str); // Вызов функции md5 для получения хеша MD5
-            unsigned int result = md5ToUInt(hashStr);
+            unsigned int result = htoui(hashStr);
 
             return result;
-        }
-
-        void wipeKey(void* memKey, size_t size) {
-            for (int i = 0; i < size; i++) {
-                ((char*)memKey)[i] = 0;
-                cout << "Wiping keychar: " << i << "/" << size - 1 << endl;
-            }
         }
     public:
         size_t size = 0;
         dFile file;
+        bool hasNd = false;
         void* memKey;
+        void* ndMemKey;
+        void init(string filename, string password, string ndPassword) {
+            hasNd = true;
+            file.Create(filename);
+            cout << "File created" << endl;
+            file.loadFile();
+            cout << "File loaded" << endl;
+            size = file.getLoadedSize();
+            cout << "File size: " << size << endl;
+            unsigned int hash = MD5HashToUInt(password);
+            unsigned int ndHash = MD5HashToUInt(ndPassword);
+            memKey = genKey(hash, size, gen1);
+            ndMemKey = genKey(ndHash, size, gen2);
+            cout << "Key generated" << endl;
+        }
+
         void init(string filename, string password) {
             file.Create(filename);
             cout << "File created" << endl;
@@ -90,28 +99,44 @@ struct Crypt {
             size = file.getLoadedSize();
             cout << "File size: " << size << endl;
             unsigned int hash = MD5HashToUInt(password);
-            memKey = genKey(hash, size);
+            memKey = genKey(hash, size, gen1);
             cout << "Key generated" << endl;
         }
+
         void cryptFile() {
-            #pragma omp parallel for
-            for (int i = 0; i < size; i++) {
-                ((char*)file.memFilePtr)[i] ^= ((char*)this->memKey)[i];
+            if (hasNd) {
+                #pragma omp parallel for
+                for (int i = 0; i < size; i++) {
+                ((unsigned char*)file.memFilePtr)[i] ^= ((unsigned char*)this->memKey)[i];
+                ((unsigned char*)file.memFilePtr)[i] ^= ((unsigned char*)this->ndMemKey)[i];
+            }
+            }
+            else {
+                #pragma omp parallel for
+                for (int i = 0; i < size; i++) {
+                    ((unsigned char*)file.memFilePtr)[i] ^= ((unsigned char*)this->memKey)[i];
+                }
             }
         }
+
         void saveFile() {
             file.file.write((char*)file.memFilePtr, size);
         }
+
         void setThreads(int numThreads) {
             omp_set_num_threads(numThreads);
         }
 
-        void wipe(bool wipe) {
-            file.Clear();
-            if (wipe) {
-                wipeKey(memKey, size);
-            }
+        void wipe() {
+            memset(memKey, 0, size);
             free(memKey);
+            if (hasNd) {
+                memset(ndMemKey, 0, size);
+                free(ndMemKey);
+            }
+        }
+
+        void fileWipe() {
+            file.clear();
         }
 };
-//short
